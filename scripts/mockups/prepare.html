@@ -1,0 +1,487 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Préparation des scènes</title>
+<body>
+<script>
+// Calcule, pour chaque scène de src/lib/mockup-scenes.json, une carte d'ombrage de la toile :
+// lumière + texture du tissu, sans les couleurs ni le texte d'origine.
+// Lancé en headless par prepare.mjs ; les résultats sont écrits dans le DOM sous forme de data URL.
+"use strict";
+
+const ROOT = new URL("../../", location.href);
+const SHADE_SCALE = 150; // S = valeur / 150 (S jusqu'à 1,7)
+
+function loadJSON(url) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url);
+    xhr.onload = () => resolve(JSON.parse(xhr.responseText));
+    xhr.onerror = reject;
+    xhr.send();
+  });
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("image " + url));
+    img.src = url;
+  });
+}
+
+// --- Géométrie : homographie carré unité -> quadrilatère (Heckbert) ---
+function squareToQuad(q) {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q;
+  const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+  if (Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9) {
+    return [x1 - x0, x2 - x1, x0, y1 - y0, y2 - y1, y0, 0, 0, 1];
+  }
+  const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2;
+  const den = dx1 * dy2 - dx2 * dy1;
+  const g = (sx * dy2 - dx2 * sy) / den;
+  const h = (dx1 * sy - sx * dy1) / den;
+  return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h, 1];
+}
+
+function invert3(m) {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+  const D = -(b * i - c * h), E = a * i - c * g, F = -(a * h - b * g);
+  const G = b * f - c * e, H = -(a * f - c * d), I = a * e - b * d;
+  const det = a * A + b * B + c * C;
+  return [A / det, D / det, G / det, B / det, E / det, H / det, C / det, F / det, I / det];
+}
+
+function pointInPolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function edgeLines(quad) {
+  return quad.map((p, i) => {
+    const q = quad[(i + 1) % 4];
+    const nx = -(q[1] - p[1]), ny = q[0] - p[0];
+    const len = Math.hypot(nx, ny);
+    return [nx / len, ny / len, -(nx * p[0] + ny * p[1]) / len];
+  });
+}
+
+// --- Couleur ---
+const TO_LIN = new Float32Array(256).map((_, i) => {
+  const c = i / 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+});
+function labOf(r, g, b) {
+  const R = TO_LIN[r], G = TO_LIN[g], B = TO_LIN[b];
+  const X = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
+  const Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  const Z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+  const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const fy = f(Y);
+  return [116 * fy - 16, 500 * (f(X) - fy), 200 * (fy - f(Z)), Y];
+}
+function hexLab(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return labOf((n >> 16) & 255, (n >> 8) & 255, n & 255);
+}
+
+// --- Petits outils d'image ---
+function boxBlurMasked(values, weights, W, H, radius) {
+  // Flou de boîte normalisé : moyenne des valeurs pondérées (poids 0 = ignoré)
+  const tmpV = new Float32Array(W * H), tmpW = new Float32Array(W * H);
+  const outV = new Float32Array(W * H), outW = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    let sv = 0, sw = 0;
+    for (let x = -radius; x < W + radius; x++) {
+      const xa = x + radius, xr = x - radius - 1;
+      if (xa < W && xa >= 0) { sv += values[y * W + xa] * weights[y * W + xa]; sw += weights[y * W + xa]; }
+      if (xr >= 0 && xr < W) { sv -= values[y * W + xr] * weights[y * W + xr]; sw -= weights[y * W + xr]; }
+      if (x >= 0 && x < W) { tmpV[y * W + x] = sv; tmpW[y * W + x] = sw; }
+    }
+  }
+  for (let x = 0; x < W; x++) {
+    let sv = 0, sw = 0;
+    for (let y = -radius; y < H + radius; y++) {
+      const ya = y + radius, yr = y - radius - 1;
+      if (ya < H && ya >= 0) { sv += tmpV[ya * W + x]; sw += tmpW[ya * W + x]; }
+      if (yr >= 0 && yr < H) { sv -= tmpV[yr * W + x]; sw -= tmpW[yr * W + x]; }
+      if (y >= 0 && y < H) { outV[y * W + x] = sv; outW[y * W + x] = sw; }
+    }
+  }
+  const out = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) out[i] = outW[i] > 1e-6 ? outV[i] / outW[i] : 0;
+  return out;
+}
+
+function dilate(mask, inside, W, H, r) {
+  let cur = mask;
+  for (let k = 0; k < r; k++) {
+    const next = cur.slice();
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      if (!inside[i] || cur[i]) continue;
+      if (cur[i - 1] || cur[i + 1] || cur[i - W] || cur[i + W]) next[i] = 1;
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+function solve(A, b) {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const f = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
+
+function mulberry(seed) {
+  return () => {
+    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// --- Traitement d'une scène ---
+function processScene(scene, img) {
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const px = ctx.getImageData(0, 0, W, H).data;
+
+  const faces = scene.faces.map((f) => ({ ...f, inv: invert3(squareToQuad(f.quad)), lines: edgeLines(f.quad) }));
+  const faceOf = new Int8Array(W * H).fill(-1);
+  const U = new Float32Array(W * H), V = new Float32Array(W * H), edgeDist = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const cx = x + 0.5, cy = y + 0.5;
+    for (let f = 0; f < faces.length; f++) {
+      const { lines, inv } = faces[f];
+      let dmin = Infinity;
+      for (const [a, b, c] of lines) dmin = Math.min(dmin, a * cx + b * cy + c);
+      if (dmin < 0) continue;
+      const i = y * W + x;
+      const w = inv[6] * cx + inv[7] * cy + inv[8];
+      faceOf[i] = f;
+      U[i] = (inv[0] * cx + inv[1] * cy + inv[2]) / w;
+      V[i] = (inv[3] * cx + inv[4] * cy + inv[5]) / w;
+      edgeDist[i] = dmin;
+      break;
+    }
+  }
+
+  // Classes : 0..k-1 = couleurs de peinture, k = encre, k+1 = indéterminé
+  const seeds = scene.seeds.map(hexLab);
+  const K = seeds.length, INK = K, UNKNOWN = K + 1;
+  const cls = new Uint8Array(W * H).fill(255);
+  const Y = new Float32Array(W * H);
+  const labs = new Float32Array(W * H * 3);
+  for (let i = 0; i < W * H; i++) {
+    if (faceOf[i] < 0) continue;
+    const [L, a, b, y] = labOf(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+    labs[i * 3] = L; labs[i * 3 + 1] = a; labs[i * 3 + 2] = b; Y[i] = y;
+  }
+  const centers = seeds.map((s) => s.slice(0, 3));
+  for (let iter = 0; iter < 4; iter++) {
+    const sums = centers.map(() => [0, 0, 0, 0]);
+    for (let i = 0; i < W * H; i++) {
+      if (faceOf[i] < 0) continue;
+      const L = labs[i * 3], a = labs[i * 3 + 1], b = labs[i * 3 + 2];
+      const forced = faces[faceOf[i]].region;
+      if (forced != null) { cls[i] = forced; continue; }
+      if (L < scene.ink.maxL && Math.hypot(a, b) < scene.ink.maxC) { cls[i] = INK; continue; }
+      let best = -1, bd = Infinity;
+      for (let k = 0; k < K; k++) {
+        const dL = (L - centers[k][0]) * (scene.lightness ?? 0.35), da = a - centers[k][1], db = b - centers[k][2];
+        const d = dL * dL + da * da + db * db;
+        if (d < bd) { bd = d; best = k; }
+      }
+      if (bd > 30 * 30) { cls[i] = UNKNOWN; continue; }
+      cls[i] = best;
+      const s = sums[best]; s[0] += L; s[1] += a; s[2] += b; s[3]++;
+    }
+    sums.forEach((s, k) => { if (s[3]) centers[k] = [s[0] / s[3], s[1] / s[3], s[2] / s[3]]; });
+  }
+
+  // Objets devant la toile (feuillages…) : dans les zones indiquées, ce qui n'est pas de la peinture reste la photo
+  const occluded = new Uint8Array(W * H);
+  for (const poly of scene.occluders ?? []) {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if (faceOf[i] < 0 || cls[i] < K || !pointInPolygon(x + 0.5, y + 0.5, poly)) continue;
+      occluded[i] = 1;
+    }
+  }
+  for (let pass = 0; pass < 1; pass++) {
+    const grow = occluded.slice();
+    for (let i = W; i < W * H - W; i++) if (!occluded[i] && faceOf[i] >= 0 && (occluded[i - 1] || occluded[i + 1] || occluded[i - W] || occluded[i + W])) grow[i] = 1;
+    occluded.set(grow);
+  }
+  for (let i = 0; i < W * H; i++) if (occluded[i]) faceOf[i] = -1;
+
+  // Éclairage de grande échelle et albédo de chaque couleur, ajustés ensemble sur la face avant :
+  // log Y = polynôme de degré 2 en (u, v) + décalage propre à chaque couleur
+  const counts = new Array(K).fill(0);
+  for (let i = 0; i < W * H; i++) if (faceOf[i] === 0 && cls[i] < K) counts[cls[i]]++;
+  const dom = counts.indexOf(Math.max(...counts));
+  const NT = 6 + K - 1;
+  const terms = (u, v, k) => {
+    const t = [1, u, v, u * u, u * v, v * v];
+    for (let j = 1; j < K; j++) t.push(k === j ? 1 : 0);
+    return t;
+  };
+  const ATA = Array.from({ length: NT }, () => new Array(NT).fill(0)), ATb = new Array(NT).fill(0);
+  for (let i = 0; i < W * H; i += 2) {
+    if (faceOf[i] !== 0 || cls[i] >= K || edgeDist[i] < 3) continue;
+    const t = terms(U[i], V[i], cls[i]), lv = Math.log(Math.max(Y[i], 1e-4));
+    for (let r = 0; r < NT; r++) { if (!t[r]) continue; ATb[r] += t[r] * lv; for (let c = 0; c < NT; c++) ATA[r][c] += t[r] * t[c]; }
+  }
+  for (let r = 0; r < NT; r++) ATA[r][r] += 1e-6;
+  const coef = solve(ATA, ATb);
+  const albedo = centers.map((_, k) => (k === 0 ? 1 : Math.exp(coef[6 + k - 1])));
+  // Une couleur absente de la face avant (rare) : albédo estimé sur ses propres pixels
+  centers.forEach((_, k) => {
+    if (counts[k] || k === 0) return;
+    const r = [];
+    for (let i = 0; i < W * H; i++) if (cls[i] === k) r.push(Y[i]);
+    r.sort((x, y) => x - y);
+    const p = Math.exp(coef[0] + coef[1] * 0.5 + coef[2] * 0.5 + coef[3] * 0.25 + coef[4] * 0.25 + coef[5] * 0.25);
+    if (r.length) albedo[k] = r[r.length >> 1] / p;
+  });
+
+  const S = new Float32Array(W * H);
+  let domSum = 0, domN = 0;
+  for (let i = 0; i < W * H; i++) {
+    if (faceOf[i] < 0 || cls[i] >= K) continue;
+    S[i] = Y[i] / albedo[cls[i]];
+    if (faceOf[i] === 0 && cls[i] === dom) { domSum += S[i]; domN++; }
+  }
+  const norm = domN ? domSum / domN : 1;
+  for (let i = 0; i < W * H; i++) S[i] /= norm;
+
+  // Les couleurs sombres amplifient le bruit de la photo : on ramène leur grain à celui de la couleur dominante
+  {
+    const w0 = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) w0[i] = faceOf[i] >= 0 && cls[i] < K ? 1 : 0;
+    const base = boxBlurMasked(S, w0, W, H, 2);
+    const v = new Array(K).fill(0), n = new Array(K).fill(0);
+    for (let i = 0; i < W * H; i++) if (w0[i] && edgeDist[i] > 3) { const r = S[i] - base[i]; v[cls[i]] += r * r; n[cls[i]]++; }
+    const sd = v.map((x, k) => Math.sqrt(x / Math.max(n[k], 1)));
+    const scale = sd.map((x) => (x > 0 ? Math.min(1, sd[dom] / x) : 1));
+    for (let i = 0; i < W * H; i++) if (w0[i]) S[i] = base[i] + (S[i] - base[i]) * scale[cls[i]];
+
+    // Peintures très sombres : la photo y est trop bruitée, on ne garde que la lumière (flou large) et on remet le grain dominant
+    const dark = albedo.map((a) => a < 0.3);
+    if (dark.some(Boolean)) {
+      const wd = new Float32Array(W * H);
+      for (let i = 0; i < W * H; i++) wd[i] = w0[i] && dark[cls[i]] ? 1 : 0;
+      const smooth = boxBlurMasked(S, wd, W, H, 6);
+      const rnd = mulberry(11);
+      for (let i = 0; i < W * H; i++) {
+        if (!wd[i]) continue;
+        const g = Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
+        S[i] = smooth[i] * (1 + g * sd[dom] * 0.9);
+      }
+    }
+  }
+
+  // Calibration : on connaît la vraie couleur de la peinture n°0 (paint0) ;
+  // on en déduit l'exposition et la teinte de la lumière de la photo
+  let exposure = null, tint = null;
+  if (scene.paint0) {
+    const n = parseInt(scene.paint0.slice(1), 16);
+    const paint = [TO_LIN[(n >> 16) & 255], TO_LIN[(n >> 8) & 255], TO_LIN[n & 255]];
+    let sr = 0, sg = 0, sb = 0, ss = 0, cnt = 0;
+    for (let i = 0; i < W * H; i++) {
+      if (faceOf[i] !== 0 || cls[i] !== 0 || edgeDist[i] < 4) continue;
+      sr += TO_LIN[px[i * 4]]; sg += TO_LIN[px[i * 4 + 1]]; sb += TO_LIN[px[i * 4 + 2]]; ss += S[i]; cnt++;
+    }
+    if (cnt) {
+      const s0 = ss / cnt;
+      const E = [sr / cnt / (paint[0] * s0), sg / cnt / (paint[1] * s0), sb / cnt / (paint[2] * s0)];
+      const top = Math.max(...E);
+      tint = E.map((e) => +(e / top).toFixed(3));
+      exposure = +top.toFixed(3);
+    }
+  }
+
+  // Masque à reconstruire : encre, indéterminé, bords, puis anomalies locales (ombres portées des lettres…)
+  const inside = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) inside[i] = faceOf[i] >= 0 ? 1 : 0;
+  let mask = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) if (inside[i] && (cls[i] >= K)) mask[i] = 1;
+  mask = dilate(mask, inside, W, H, scene.dilate ?? 2);
+  // Pixels de transition entre deux couleurs
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    if (!inside[i] || cls[i] >= K) continue;
+    const n = [i - 1, i + 1, i - W, i + W];
+    if (n.some((j) => inside[j] && cls[j] < K && cls[j] !== cls[i])) mask[i] = 1;
+  }
+  mask = dilate(mask, inside, W, H, 1);
+  for (let i = 0; i < W * H; i++) if (inside[i] && edgeDist[i] < 1.5) mask[i] = 1;
+
+  // Halo des anciennes lettres : on retire aussi les légers écarts de lumière juste autour de l'encre
+  {
+    let halo = new Uint8Array(W * H);
+    for (let i = 0; i < W * H; i++) if (inside[i] && cls[i] === INK) halo[i] = 1;
+    halo = dilate(halo, inside, W, H, scene.halo ?? 6);
+    for (let pass = 0; pass < 3; pass++) {
+      const weights = new Float32Array(W * H);
+      for (let i = 0; i < W * H; i++) weights[i] = inside[i] && !mask[i] ? 1 : 0;
+      const base = boxBlurMasked(S, weights, W, H, 8);
+      let added = 0;
+      for (let i = 0; i < W * H; i++) {
+        if (!halo[i] || mask[i] || !base[i]) continue;
+        const r = S[i] / base[i];
+        if (r < 0.95 || r > 1.05) { mask[i] = 1; added++; }
+      }
+      if (!added) break;
+    }
+  }
+
+  if (scene.anomaly > 0) {
+    for (let pass = 0; pass < 2; pass++) {
+      const weights = new Float32Array(W * H);
+      for (let i = 0; i < W * H; i++) weights[i] = inside[i] && !mask[i] ? 1 : 0;
+      const base = boxBlurMasked(S, weights, W, H, 10);
+      let added = 0;
+      for (let i = 0; i < W * H; i++) {
+        if (!inside[i] || mask[i] || !base[i]) continue;
+        const r = S[i] / base[i];
+        if (r < scene.anomaly || r > 1 / scene.anomaly) { mask[i] = 1; added++; }
+      }
+      mask = dilate(mask, inside, W, H, 1);
+      if (!added) break;
+    }
+  }
+
+  // Reconstruction : propagation depuis les pixels sûrs, puis diffusion, par face
+  const known = new Uint8Array(W * H);
+  const queue = [];
+  for (let i = 0; i < W * H; i++) if (inside[i] && !mask[i]) { known[i] = 1; queue.push(i); }
+  for (let qi = 0; qi < queue.length; qi++) {
+    const i = queue[qi];
+    for (const j of [i - 1, i + 1, i - W, i + W]) {
+      if (j < 0 || j >= W * H || known[j] || !inside[j] || faceOf[j] !== faceOf[i]) continue;
+      S[j] = S[i]; known[j] = 1; queue.push(j);
+    }
+  }
+  const holes = [];
+  for (let i = 0; i < W * H; i++) if (inside[i] && mask[i]) holes.push(i);
+  for (let it = 0; it < 300; it++) {
+    for (const i of holes) {
+      let s = 0, n = 0;
+      for (const j of [i - 1, i + 1, i - W, i + W]) if (inside[j] && faceOf[j] === faceOf[i]) { s += S[j]; n++; }
+      if (n) S[i] = s / n;
+    }
+  }
+  // Grain du tissu dans les zones reconstruites, à l'écart-type mesuré localement autour du trou
+  const weights = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) weights[i] = inside[i] && !mask[i] ? 1 : 0;
+  const local = boxBlurMasked(S, weights, W, H, 1);
+  const r2 = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) if (weights[i]) { const r = S[i] - local[i]; r2[i] = r * r; }
+  const localVar = boxBlurMasked(r2, weights, W, H, 6);
+  let sigmaSum = 0;
+  const rnd = mulberry(7);
+  for (const i of holes) {
+    const sigma = Math.sqrt(localVar[i] || 0) * 0.8;
+    sigmaSum += sigma;
+    const g = Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
+    S[i] = Math.max(0, S[i] + g * sigma);
+  }
+  const sigma = sigmaSum / Math.max(holes.length, 1);
+
+  // On prolonge l'ombrage de 2 px hors de la toile, pour l'anticrénelage des bords au rendu
+  let ring = [];
+  for (let i = 0; i < W * H; i++) if (inside[i]) ring.push(i);
+  const extended = inside.slice();
+  for (let step = 0; step < 2; step++) {
+    const next = [];
+    for (const i of ring) {
+      for (const j of [i - 1, i + 1, i - W, i + W]) {
+        if (j < 0 || j >= W * H || extended[j] || occluded[j]) continue;
+        extended[j] = 1; S[j] = S[i]; next.push(j);
+      }
+    }
+    ring = next;
+  }
+
+  // Sorties
+  const shade = ctx.createImageData(W, H);
+  const classes = ctx.createImageData(W, H);
+  const palette = [[60, 130, 230], [230, 140, 40], [80, 190, 90], [200, 60, 200]];
+  for (let i = 0; i < W * H; i++) {
+    if (extended[i]) {
+      const v = Math.max(0, Math.min(255, Math.round(S[i] * SHADE_SCALE)));
+      shade.data.set([v, v, v, 255], i * 4);
+    }
+    if (!inside[i]) { classes.data.set([px[i * 4] * 0.4, px[i * 4 + 1] * 0.4, px[i * 4 + 2] * 0.4, 255], i * 4); continue; }
+    const c = mask[i] ? [255, 0, 0] : cls[i] < K ? palette[cls[i] % 4] : [255, 255, 0];
+    classes.data.set([...c, 255], i * 4);
+  }
+  const out = (imageData) => {
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    c.getContext("2d").putImageData(imageData, 0, 0);
+    return c.toDataURL("image/png");
+  };
+  return {
+    shade: out(shade),
+    classes: out(classes),
+    info: {
+      dom,
+      albedo: albedo.map((a) => +a.toFixed(3)),
+      norm: +norm.toFixed(3),
+      sigma: +sigma.toFixed(4),
+      holes: holes.length,
+      centers: centers.map((c) => c.map((x) => +x.toFixed(1))),
+      exposure,
+      tint,
+    },
+  };
+}
+
+(async () => {
+  const log = document.createElement("pre");
+  log.id = "log";
+  document.body.append(log);
+  try {
+    const { scenes } = await loadJSON(new URL("src/lib/mockup-scenes.json", ROOT).href);
+    const only = new URLSearchParams(location.search).get("scene");
+    for (const scene of scenes) {
+      if (only && scene.id !== only) continue;
+      const img = await loadImage(new URL("public" + scene.photo, ROOT).href);
+      const r = processScene(scene, img);
+      for (const key of ["shade", "classes"]) {
+        const el = document.createElement("pre");
+        el.id = `out-${scene.id}-${key}`;
+        el.textContent = r[key];
+        document.body.append(el);
+      }
+      log.textContent += `${scene.id} ${JSON.stringify(r.info)}\n`;
+    }
+    log.textContent += "DONE\n";
+  } catch (e) {
+    log.textContent += "ERROR " + (e && e.stack ? e.stack : e) + "\n";
+  }
+})();
+</script>
+</body>

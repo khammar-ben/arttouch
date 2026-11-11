@@ -1,0 +1,132 @@
+// SQLite en local ; passer à "postgresql" pour la production.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Collection {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  name        String
+  nameAr      String
+  description String
+  position    Int       @default(0)
+  products    Product[]
+}
+
+model Product {
+  id               String        @id @default(cuid())
+  slug             String        @unique
+  title            String
+  titleAr          String?
+  description      String
+  /// Photos réelles, chemins sous /public séparés par des virgules ; la première est la principale
+  images           String        @default("")
+  collectionId     String
+  collection       Collection    @relation(fields: [collectionId], references: [id])
+  /// calligraphy | words | blobs | waves | lineart | texture
+  artStyle         String
+  /// Texte arabe par défaut ("|" sépare les panneaux) ; motif pour lineart (tulipe | branche)
+  artText          String?
+  /// Compositions au choix pour une toile personnalisée : calligraphy,words,band,vertical,diagonal,texture
+  compositions     String        @default("")
+  /// Pièces séparées par des virgules : salon,chambre,entree,bureau
+  rooms            String        @default("")
+  /// Nombre de panneaux proposés : "1", "1,2,3", "3"...
+  panelOptions     String        @default("1")
+  priceMultiplier  Float         @default(1)
+  allowsCustomText Boolean       @default(false)
+  customTextMax    Int           @default(30)
+  productionDays   Int           @default(7)
+  featured         Boolean       @default(false)
+  position         Int           @default(0)
+  /// DRAFT | ACTIVE | HIDDEN
+  status           String        @default("ACTIVE")
+  sizes            Size[]
+  colors           ColorOption[]
+  /// Nom de la couleur sélectionnée par défaut (celle de la photo)
+  defaultColor     String?
+  orderItems       OrderItem[]
+  createdAt        DateTime      @default(now())
+}
+
+model Size {
+  id         String    @id @default(cuid())
+  label      String    @unique
+  widthCm    Int
+  heightCm   Int
+  /// Prix du cadre bois, par panneau
+  framePrice Int
+  position   Int       @default(0)
+  prices     Price[]
+  products   Product[]
+}
+
+/// Grille de prix : une ligne par (taille, nombre de panneaux)
+model Price {
+  sizeId String
+  size   Size   @relation(fields: [sizeId], references: [id], onDelete: Cascade)
+  panels Int
+  amount Int
+
+  @@id([sizeId, panels])
+}
+
+model ColorOption {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  bg         String
+  accent     String
+  ink        String
+  /// Supplément par panneau (ex. peinture dorée)
+  extraPrice Int       @default(0)
+  position   Int       @default(0)
+  products   Product[]
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  number         String      @unique
+  customerName   String
+  phone          String
+  email          String?
+  city           String
+  address        String
+  note           String?
+  subtotal       Int
+  shippingFee    Int
+  total          Int
+  /// COD | TRANSFER | CARD
+  paymentMethod  String      @default("COD")
+  /// TO_CONFIRM | CONFIRMED | IN_PRODUCTION | READY | SHIPPED | DELIVERED | CANCELLED
+  status         String      @default("TO_CONFIRM")
+  trackingNumber String?
+  items          OrderItem[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+/// Les champs sont des copies au moment de la commande, pour que la facture ne change pas.
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title      String
+  sizeLabel  String
+  panels     Int
+  colorName  String
+  framed     Boolean
+  customText String?
+  /// ruqaa | naskh | kufi
+  script     String?
+  composition String?
+  note       String?
+  unitPrice  Int
+  quantity   Int
+}

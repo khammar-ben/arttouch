@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-cream: #f6f1ea;
+  --color-sand: #eae0d3;
+  --color-line: #ddd2c3;
+  --color-ink: #1e1b18;
+  --color-taupe: #6f6357;
+  --color-bordeaux: #7e2a26;
+  --color-terracotta: #b5745a;
+
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-cormorant);
+  --font-arabic: var(--font-amiri);
+  --font-calli: var(--font-ruqaa);
+}
+
+/* Le texte apparaît comme de l'encre qui sèche */
+@keyframes ink-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ink-in {
+  animation: ink-in 0.6s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ink-in {
+    animation: none;
+  }
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+}
+
+::selection {
+  background: var(--color-terracotta);
+  color: var(--color-cream);
+}
