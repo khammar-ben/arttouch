@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import Image from "next/image";
 import Link from "next/link";
 import { ProductCard, ProductVisual } from "@/components/ProductCard";
@@ -5,8 +6,13 @@ import { WordStudio } from "@/components/WordStudio";
 import { getCollections, getProducts } from "@/lib/catalog";
 import { FREE_SHIPPING_FROM, formatDH } from "@/lib/pricing";
 
+// Rendue à la demande : le build (Vercel) n'a pas besoin d'accéder à la base.
+export const dynamic = "force-dynamic";
+
 // Le catalogue est relu au plus toutes les 60 s, sans rebuild.
-export const revalidate = 60;
+const getHomeCatalog = unstable_cache(() => Promise.all([getCollections(), getProducts()]), ["home-catalog"], {
+  revalidate: 60,
+});
 
 const TRUST = [
   { title: "Peint à la main", text: "Chaque toile est unique, faite dans notre atelier." },
@@ -17,7 +23,7 @@ const TRUST = [
 
 export default async function HomePage() {
   // Une seule lecture du catalogue pour toute la page
-  const [collections, all] = await Promise.all([getCollections(), getProducts()]);
+  const [collections, all] = await getHomeCatalog();
   const featured = all.filter((p) => p.featured);
   const custom = all.find((p) => p.slug === "votre-mot");
   const boutique = all

@@ -283,6 +283,12 @@ const PRODUCTS: Seed[] = [
 ];
 
 async function main() {
+  // Le seed vide toutes les tables : on refuse de tourner sur une base qui a déjà des commandes.
+  const orders = await db.order.count();
+  if (orders > 0 && !process.env.SEED_FORCE) {
+    throw new Error(`${orders} commande(s) en base : le seed effacerait tout. Relancer avec SEED_FORCE=1 pour forcer.`);
+  }
+
   await db.orderItem.deleteMany();
   await db.order.deleteMany();
   await db.product.deleteMany();

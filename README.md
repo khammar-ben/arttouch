@@ -6,13 +6,17 @@ Boutique en ligne de toiles peintes à la main (calligraphie, abstrait, line art
 
 ```bash
 npm install
-cp .env.example .env      # puis changer ADMIN_PASSWORD et NEXT_PUBLIC_WHATSAPP_NUMBER
-npm run db:push           # crée la base SQLite (prisma/dev.db)
+cp .env.example .env      # puis renseigner DATABASE_URL (PostgreSQL), ADMIN_PASSWORD et NEXT_PUBLIC_WHATSAPP_NUMBER
+npm run db:push           # crée les tables dans la base PostgreSQL
 npm run db:seed           # collections, tailles, prix, couleurs et produits d'exemple
 npm run dev               # http://localhost:3000
 ```
 
 Espace atelier : `/admin` (mot de passe `ADMIN_PASSWORD`).
+
+Pour la base locale, un Postgres Docker suffit :
+`docker run -d --name arttouch-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=arttouch -p 5432:5432 postgres:16`
+puis `DATABASE_URL="postgresql://postgres:postgres@localhost:5432/arttouch"`. Une branche Neon de développement fonctionne aussi.
 
 ## Ce qui existe
 
@@ -51,8 +55,16 @@ Pour ajouter ou modifier une scène :
 2. Lancer `node scripts/mockups/prepare.mjs` (utilise Microsoft Edge en mode headless, ou le navigateur indiqué par `BROWSER_PATH`).
    Le script écrit les cartes d'ombrage et reporte l'exposition et la teinte calibrées dans le JSON.
 
-## Production
+## Production (Vercel)
+
+1. Créer une base PostgreSQL : sur Vercel, onglet **Storage** → **Neon** (gratuit), reliée au projet ; ou Neon / Supabase directement.
+2. Dans **Settings → Environment Variables** du projet Vercel : `DATABASE_URL`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_WHATSAPP_NUMBER`.
+3. Créer les tables et le catalogue **une seule fois**, depuis sa machine, avec l'URL de production dans `DATABASE_URL` :
+   `npx prisma db push && npm run db:seed`.
+   Le build n'accède pas à la base (toutes les pages qui lisent le catalogue sont rendues à la demande), mais le site affiche une erreur tant que les tables n'existent pas.
+4. Importer le dépôt GitHub dans Vercel (le préréglage Next.js suffit) et déployer.
+
+Le seed **vide toutes les tables**. Il refuse de tourner dès qu'il y a une commande en base (forcer avec `SEED_FORCE=1`, à éviter en production).
+Après une modification de `prisma/schema.prisma`, relancer `npx prisma db push` sur la base de production avant de déployer.
 
 Sur une machine où le disque est presque plein, `NEXT_NO_BUILD_CACHE=1 npm run build` évite le cache webpack (environ 110 Mo).
-
-Passer `provider` à `postgresql` dans `prisma/schema.prisma`, mettre l'URL Postgres dans `DATABASE_URL`, puis `npx prisma db push && npm run db:seed`.
