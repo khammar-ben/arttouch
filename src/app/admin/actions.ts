@@ -1,10 +1,10 @@
 "use server";
 
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { ADMIN_COOKIE, adminToken } from "@/lib/admin-token";
+import { ADMIN_COOKIE, adminPassword, adminToken } from "@/lib/admin-token";
 import { db } from "@/lib/db";
 import { STATUS_IDS } from "@/lib/order-status";
 
@@ -15,13 +15,12 @@ async function requireAdmin() {
 }
 
 export async function login(formData: FormData) {
+  const expected = adminPassword();
+  if (!expected) redirect("/admin/login");
   const password = String(formData.get("password") ?? "");
-  const expected = process.env.ADMIN_PASSWORD ?? "";
-  const ok =
-    expected.length > 0 &&
-    password.length === expected.length &&
-    timingSafeEqual(Buffer.from(password), Buffer.from(expected));
-  if (!ok) redirect("/admin/login?error=1");
+  // Comparaison des empreintes : même longueur quelle que soit la saisie (accents compris)
+  const hash = (s: string) => createHash("sha256").update(s).digest();
+  if (!timingSafeEqual(hash(password), hash(expected))) redirect("/admin/login?error=1");
 
   (await cookies()).set(ADMIN_COOKIE, (await adminToken())!, {
     httpOnly: true,
