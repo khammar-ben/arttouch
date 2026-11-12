@@ -43,13 +43,15 @@ export default async function AdminPage() {
       <div className="mt-8 flex gap-4 overflow-x-auto pb-6">
         {ORDER_STATUSES.map((status) => {
           const column = all.filter((o) => o.status === status.id);
+          // Défilement horizontal sur petit écran ; sur grand écran les 6 colonnes tiennent sans barre
           return (
-            <section key={status.id} className="w-80 shrink-0 bg-sand/60 p-3">
+            <section key={status.id} className="w-72 shrink-0 bg-sand/60 p-3 2xl:w-auto 2xl:min-w-0 2xl:flex-1">
               <h2 className="flex items-center justify-between px-1 text-sm font-medium">
                 {status.label}
                 <span className="rounded-full bg-cream px-2 text-xs">{column.length}</span>
               </h2>
               <div className="mt-3 space-y-3">
+                {column.length === 0 && <p className="px-1 text-xs text-taupe">Aucune commande</p>}
                 {column.map((order) => {
                   const phone = order.phone.replace(/^0/, "212").replace(/^\+/, "");
                   return (
