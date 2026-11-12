@@ -6,7 +6,7 @@ Boutique en ligne de toiles peintes à la main (calligraphie, abstrait, line art
 
 ```bash
 npm install
-cp .env.example .env      # puis renseigner DATABASE_URL (PostgreSQL), ADMIN_PASSWORD et NEXT_PUBLIC_WHATSAPP_NUMBER
+cp .env.example .env      # puis renseigner DATABASE_URL, DIRECT_URL (PostgreSQL), ADMIN_PASSWORD et NEXT_PUBLIC_WHATSAPP_NUMBER
 npm run db:push           # crée les tables dans la base PostgreSQL
 npm run db:seed           # collections, tailles, prix, couleurs et produits d'exemple
 npm run dev               # http://localhost:3000
@@ -16,7 +16,7 @@ Espace atelier : `/admin` (mot de passe `ADMIN_PASSWORD`).
 
 Pour la base locale, un Postgres Docker suffit :
 `docker run -d --name arttouch-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=arttouch -p 5432:5432 postgres:16`
-puis `DATABASE_URL="postgresql://postgres:postgres@localhost:5432/arttouch"`. Une branche Neon de développement fonctionne aussi.
+puis la même URL dans `DATABASE_URL` et `DIRECT_URL` : `postgresql://postgres:postgres@localhost:5432/arttouch`. Un projet Supabase de développement fonctionne aussi.
 
 ## Ce qui existe
 
@@ -57,9 +57,11 @@ Pour ajouter ou modifier une scène :
 
 ## Production (Vercel)
 
-1. Créer une base PostgreSQL : sur Vercel, onglet **Storage** → **Neon** (gratuit), reliée au projet ; ou Neon / Supabase directement.
-2. Dans **Settings → Environment Variables** du projet Vercel : `DATABASE_URL`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_WHATSAPP_NUMBER`.
-3. Créer les tables et le catalogue **une seule fois**, depuis sa machine, avec l'URL de production dans `DATABASE_URL` :
+1. Créer un projet sur [Supabase](https://supabase.com) (gratuit). Bouton **Connect** → onglet **ORMs** → **Prisma** : il donne les deux URL.
+   - `DATABASE_URL` : *Transaction pooler* (port **6543**), avec `?pgbouncer=true&connection_limit=1` à la fin. C'est celle du site : les fonctions Vercel ouvrent beaucoup de connexions courtes.
+   - `DIRECT_URL` : *Session pooler* (port **5432**). C'est celle de `prisma db push`. La connexion « Direct » (`db.xxx.supabase.co`) n'est joignable qu'en IPv6, d'où le Session pooler.
+2. Dans **Settings → Environment Variables** du projet Vercel : `DATABASE_URL`, `DIRECT_URL`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_WHATSAPP_NUMBER`.
+3. Créer les tables et le catalogue **une seule fois**, depuis sa machine, avec les URL de production dans `.env` :
    `npx prisma db push && npm run db:seed`.
    Le build n'accède pas à la base (toutes les pages qui lisent le catalogue sont rendues à la demande), mais le site affiche une erreur tant que les tables n'existent pas.
 4. Importer le dépôt GitHub dans Vercel (le préréglage Next.js suffit) et déployer.
