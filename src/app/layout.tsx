@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
 import { Amiri, Aref_Ruqaa, Cormorant_Garamond, Inter, Reem_Kufi } from "next/font/google";
-import { CartProvider } from "@/components/cart/CartProvider";
-import { Footer } from "@/components/Footer";
-import { Header } from "@/components/Header";
 import "./globals.css";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
@@ -20,11 +17,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="fr">
       <body className={`${inter.variable} ${cormorant.variable} ${amiri.variable} ${ruqaa.variable} ${kufi.variable} font-sans antialiased`}>
-        <CartProvider>
-          <Header />
-          <main>{children}</main>
-          <Footer />
-        </CartProvider>
+        {children}
       </body>
     </html>
   );

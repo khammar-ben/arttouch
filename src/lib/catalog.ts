@@ -4,6 +4,9 @@ import { db } from "./db";
 import { lowestPrice } from "./pricing";
 import type { ArtStyle, ProductDTO } from "./types";
 
+/** Étiquette du cache du catalogue : l'atelier l'invalide après chaque modification. */
+export const CATALOG_TAG = "catalog";
+
 export const productInclude = {
   collection: true,
   sizes: { include: { prices: true }, orderBy: { position: "asc" } },

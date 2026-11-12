@@ -12,7 +12,7 @@ npm run db:seed           # collections, tailles, prix, couleurs et produits d'e
 npm run dev               # http://localhost:3000
 ```
 
-Espace atelier : `/admin` (mot de passe `ADMIN_PASSWORD`).
+Espace atelier : `/admin` (mot de passe `ADMIN_PASSWORD`). L'envoi de photos demande aussi `SUPABASE_SERVICE_ROLE_KEY`.
 
 Pour la base locale, un Postgres Docker suffit :
 `docker run -d --name arttouch-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=arttouch -p 5432:5432 postgres:16`
@@ -27,7 +27,11 @@ puis la même URL dans `DATABASE_URL` et `DIRECT_URL` : `postgresql://postgres:p
 | `/produit/[slug]` | Photo + configurateur : format (seule/duo/trio), taille, couleurs, cadre, texte personnalisé, aperçu et vue à l'échelle |
 | `/panier`, `/commande` | Panier (localStorage) et commande en paiement à la livraison |
 | `/commande/merci/[id]` | Confirmation + lien WhatsApp |
-| `/admin` | Tableau de production : À confirmer → Confirmée → En production → Prête → Expédiée → Livrée |
+| `/admin` | Atelier : tableau de bord (chiffre d'affaires, commandes, meilleures ventes) |
+| `/admin/commandes` | Liste filtrable, fiche commande (statut, suivi, coordonnées, impression, suppression), export CSV |
+| `/admin/production` | Tableau de production : À confirmer → Confirmée → En production → Prête → Expédiée → Livrée |
+| `/admin/produits` | Catalogue : création, modification, duplication, suppression, photos (Supabase Storage) |
+| `/admin/collections`, `/admin/tailles`, `/admin/couleurs` | Collections, grille de prix par format et nombre de panneaux, palettes |
 
 ## Organisation
 
@@ -60,7 +64,7 @@ Pour ajouter ou modifier une scène :
 1. Créer un projet sur [Supabase](https://supabase.com) (gratuit). Bouton **Connect** → onglet **ORMs** → **Prisma** : il donne les deux URL.
    - `DATABASE_URL` : *Transaction pooler* (port **6543**), avec `?pgbouncer=true&connection_limit=1` à la fin. C'est celle du site : les fonctions Vercel ouvrent beaucoup de connexions courtes.
    - `DIRECT_URL` : *Session pooler* (port **5432**). C'est celle de `prisma db push`. La connexion « Direct » (`db.xxx.supabase.co`) n'est joignable qu'en IPv6, d'où le Session pooler.
-2. Dans **Settings → Environment Variables** du projet Vercel : `DATABASE_URL`, `DIRECT_URL`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_WHATSAPP_NUMBER`.
+2. Dans **Settings → Environment Variables** du projet Vercel : `DATABASE_URL`, `DIRECT_URL`, `ADMIN_PASSWORD`, `NEXT_PUBLIC_WHATSAPP_NUMBER`, `SUPABASE_SERVICE_ROLE_KEY` (photos ; le dossier public `toiles` du Storage est créé au premier envoi).
 3. Créer les tables et le catalogue **une seule fois**, depuis sa machine, avec les URL de production dans `.env` :
    `npx prisma db push && npm run db:seed`.
    Le build n'accède pas à la base (toutes les pages qui lisent le catalogue sont rendues à la demande), mais le site affiche une erreur tant que les tables n'existent pas.

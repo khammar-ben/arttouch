@@ -3,15 +3,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { ProductCard, ProductVisual } from "@/components/ProductCard";
 import { WordStudio } from "@/components/WordStudio";
-import { getCollections, getProducts } from "@/lib/catalog";
+import { CATALOG_TAG, getCollections, getProducts } from "@/lib/catalog";
 import { FREE_SHIPPING_FROM, formatDH } from "@/lib/pricing";
 
 // Rendue à la demande : le build (Vercel) n'a pas besoin d'accéder à la base.
 export const dynamic = "force-dynamic";
 
-// Le catalogue est relu au plus toutes les 60 s, sans rebuild.
+// Le catalogue est relu au plus toutes les 60 s, ou tout de suite après une modification dans l'atelier.
 const getHomeCatalog = unstable_cache(() => Promise.all([getCollections(), getProducts()]), ["home-catalog"], {
   revalidate: 60,
+  tags: [CATALOG_TAG],
 });
 
 const TRUST = [

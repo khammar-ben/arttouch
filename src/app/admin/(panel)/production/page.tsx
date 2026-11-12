@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { PageHeader } from "@/components/admin/ui";
+import { formatDate, PANEL_LABELS } from "@/lib/admin-labels";
 import { db } from "@/lib/db";
 import { CANCELLABLE, ORDER_STATUSES } from "@/lib/order-status";
 import { formatDH } from "@/lib/pricing";
 import { COMPOSITIONS } from "@/lib/compositions";
 import { isScript, SCRIPTS } from "@/lib/scripts";
 import type { ArtStyle } from "@/lib/types";
-import { logout, setOrderStatus } from "./actions";
+import { setOrderStatus } from "../../actions";
 
-export const metadata: Metadata = { title: "Production", robots: { index: false } };
-export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Production" };
 
-const PANEL_LABELS: Record<number, string> = { 1: "Seule", 2: "Duo", 3: "Trio" };
-
-export default async function AdminPage() {
+export default async function ProductionPage() {
   const [orders, delivered] = await Promise.all([
     db.order.findMany({
       where: { status: { notIn: ["DELIVERED", "CANCELLED"] } },
@@ -25,22 +25,13 @@ export default async function AdminPage() {
   const revenue = delivered.reduce((sum, o) => sum + o.total, 0);
 
   return (
-    <div className="px-4 pt-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-serif text-4xl">Production</h1>
-          <p className="mt-1 text-sm text-taupe">
-            {orders.length} commande{orders.length > 1 ? "s" : ""} en cours · {formatDH(revenue)} sur les 10 dernières livrées
-          </p>
-        </div>
-        <form action={logout}>
-          <button type="submit" className="text-sm underline underline-offset-4">
-            Déconnexion
-          </button>
-        </form>
-      </div>
+    <div>
+      <PageHeader
+        title="Production"
+        description={`${orders.length} commande${orders.length > 1 ? "s" : ""} en cours · ${formatDH(revenue)} sur les 10 dernières livrées`}
+      />
 
-      <div className="mt-8 flex gap-4 overflow-x-auto pb-6">
+      <div className="flex gap-4 overflow-x-auto pb-6">
         {ORDER_STATUSES.map((status) => {
           const column = all.filter((o) => o.status === status.id);
           // Défilement horizontal sur petit écran ; sur grand écran les 6 colonnes tiennent sans barre
@@ -57,8 +48,10 @@ export default async function AdminPage() {
                   return (
                     <article key={order.id} className="bg-white p-4 text-sm shadow-sm">
                       <div className="flex justify-between gap-2">
-                        <p className="font-medium">{order.number}</p>
-                        <p className="text-xs text-taupe">{order.createdAt.toLocaleDateString("fr-MA")}</p>
+                        <Link href={`/admin/commandes/${order.id}`} className="font-medium underline-offset-4 hover:underline">
+                          {order.number}
+                        </Link>
+                        <p className="text-xs text-taupe">{formatDate(order.createdAt)}</p>
                       </div>
                       <p className="mt-1">
                         {order.customerName} · {order.city}
